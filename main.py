@@ -7,7 +7,7 @@ import pickle, numpy as np, pandas as pd, os, logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="NanoToxi RF v8", version="8.0.0")
+app = FastAPI(title="NanoToxi RF v9", version="9.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,7 +17,7 @@ app.add_middleware(
 )
 
 # ── Load model ────────────────────────────────────────────────────────────────
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml_models", "RandomForest_v8_github.pkl")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml_models", "RandomForest_v9_combined.pkl")
 
 pipeline = None
 feature_names = []
@@ -37,9 +37,9 @@ try:
     top_cells       = data["top_cells"]
     cell_cols       = data["cell_cols"]
     THRESHOLD       = float(data.get("best_threshold", 0.57))
-    logger.info(f"RF v8 loaded. Features={len(feature_names)}, Materials={len(material_lookup)}, Threshold={THRESHOLD}")
+    logger.info(f"RF v9 loaded. Features={len(feature_names)}, Materials={len(material_lookup)}, Threshold={THRESHOLD}")
 except Exception as e:
-    logger.error(f"Failed to load RF v8: {e}")
+    logger.error(f"Failed to load RF v9: {e}")
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ def risk_level(label, proba):
 def health():
     return {
         "status": "ok",
-        "model": "rf_v8",
+        "model": "rf_v9",
         "loaded": pipeline is not None,
         "features": len(feature_names),
         "materials_in_lookup": len(material_lookup),
@@ -147,7 +147,7 @@ def predict(req: PredictRequest):
             toxicity_label=label,
             confidence=round(proba, 4),
             risk_level=risk_level(label, proba),
-            model_version="rf_v8",
+            model_version="rf_v9",
             material_found_in_lookup=found,
             threshold_used=THRESHOLD,
         )
