@@ -17,7 +17,7 @@ app.add_middleware(
 )
 
 # ── Load model ────────────────────────────────────────────────────────────────
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml_models", "RandomForest_v9_combined.pkl")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml_models", "RandomForest_v9b_combined.pkl")
 
 pipeline = None
 feature_names = []
