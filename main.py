@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional
-import pickle, numpy as np, pandas as pd, os, logging
+import pickle, joblib, numpy as np, pandas as pd, os, logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,8 +33,7 @@ cell_line_cancer  = {}
 THRESHOLD        = 0.5
 
 try:
-    with open(MODEL_PATH, "rb") as fh:
-        data = pickle.load(fh)
+    data = joblib.load(MODEL_PATH)
     pipeline        = data["pipeline"]
     feature_names   = data["feature_names"]
     material_lookup = data["material_lookup"]
