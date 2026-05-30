@@ -7,7 +7,7 @@ import pickle, numpy as np, pandas as pd, os, logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="NanoToxi RF v9", version="9.0.0")
+app = FastAPI(title="NanoToxi RF v12", version="12.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,15 +17,20 @@ app.add_middleware(
 )
 
 # ── Load model ────────────────────────────────────────────────────────────────
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml_models", "RandomForest_v9b_combined.pkl")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml_models", "RandomForest_v12.pkl")
 
-pipeline = None
+pipeline     = None
 feature_names = []
 material_lookup = {}
-global_median = {}
-top_cells = []
-cell_cols = []
-THRESHOLD = 0.57
+global_median   = {}
+top_cells  = []
+cell_cols  = []
+assay_cats       = []
+morph_cols       = []
+morph_api_map    = {}
+cell_line_species = {}
+cell_line_cancer  = {}
+THRESHOLD        = 0.5
 
 try:
     with open(MODEL_PATH, "rb") as fh:
@@ -36,24 +41,48 @@ try:
     global_median   = data["global_median"]
     top_cells       = data["top_cells"]
     cell_cols       = data["cell_cols"]
-    THRESHOLD       = float(data.get("best_threshold", 0.57))
-    logger.info(f"RF v9 loaded. Features={len(feature_names)}, Materials={len(material_lookup)}, Threshold={THRESHOLD}")
+    assay_cats      = data.get("assay_cats", ["MTT","CCK8","LDH","WST1","Other"])
+    morph_cols      = data.get("morph_cols", [])
+    morph_api_map     = data.get("morph_api_map", {})
+    cell_line_species = data.get("cell_line_species", {})
+    cell_line_cancer  = data.get("cell_line_cancer",  {})
+    THRESHOLD         = float(data.get("best_threshold", 0.5))
+    logger.info(f"RF v12 loaded. Features={len(feature_names)}, Materials={len(material_lookup)}, Threshold={THRESHOLD}")
 except Exception as e:
-    logger.error(f"Failed to load RF v9: {e}")
+    logger.error(f"Failed to load RF v12: {e}")
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
 class PredictRequest(BaseModel):
-    np_type: str = Field(..., description="e.g. ZnO, CuO, TiO2, SiO2, Au, PLGA")
-    primary_size_nm: float = Field(..., gt=0)
-    hydrodynamic_size_nm: Optional[float] = None
-    zeta_potential_mv: float = 0.0
-    surface_area_m2g: Optional[float] = 0.0
-    cell_type: str = "HeLa"
-    dose_max_ugml: float = Field(..., gt=0)
-    exposure_time_h: float = Field(..., gt=0)
-    ph: float = 7.4
-    nanoparticle_name: Optional[str] = "Unknown"
+    # Required
+    np_type: str = Field(..., description="e.g. ZnO, CuO, TiO2, SiO2, Au, Ag, PLGA")
+    primary_size_nm: float = Field(..., gt=0, description="Core/primary size in nm")
+    dose_max_ugml: float = Field(..., gt=0, description="Max exposure dose in µg/mL")
+    exposure_time_h: float = Field(..., gt=0, description="Exposure duration in hours")
+
+    # Physicochemical — optional
+    hydrodynamic_size_nm: Optional[float] = Field(None, description="Hydrodynamic size in nm; defaults to primary_size if omitted")
+    zeta_potential_mv: float = Field(0.0, description="Surface charge in mV")
+    surface_area_m2g: Optional[float] = Field(0.0, description="BET surface area in m²/g")
+
+    # Experimental conditions — optional
+    cell_type: str = Field("HeLa", description="Cell line name")
+    ph: float = Field(7.4, ge=4.0, le=10.0, description="pH of exposure medium (physiological default: 7.4)")
+    temperature_c: float = Field(37.0, ge=20.0, le=42.0, description="Incubation temperature °C (cell culture default: 37.0)")
+
+    # Particle properties — optional
+    is_coated: int = Field(0, ge=0, le=1, description="1 = surface-coated/functionalized, 0 = bare")
+    morphology: str = Field("Unknown", description="Particle shape: Sphere, Rod, Tube, Wire, Sheet, Core-Shell, Cubic, Dendrimer, Fibrous, Hexagonal, Porous, Other, Unknown")
+    assay_type: str = Field("Unknown", description="Viability assay used: MTT, CCK-8, LDH, WST-1, Other, Unknown")
+
+    # Biological context — optional
+    cell_type_cancer: Optional[float] = Field(None, ge=0.0, le=1.0, description="Is cell line cancer-derived? 1=Cancer, 0=Normal, 0.5=Unknown. Omit to auto-detect from cell_type name.")
+    cell_species_human: Optional[float] = Field(None, ge=0.0, le=1.0, description="Is cell line human-derived? 1=Human, 0=non-human (mouse/rat), 0.5=Unknown. Omit to auto-detect.")
+    is_therapeutic: int = Field(0, ge=0, le=1, description="1 = NP designed for therapeutic delivery (intentionally cytotoxic context), 0 = safety study")
+    np_type_class: str = Field("Inorganic", description="Material class: Inorganic, Organic, Hybrid")
+
+    # Label only — not used in prediction
+    nanoparticle_name: Optional[str] = Field("Unknown", description="Descriptive label only, not used in model")
 
 
 class PredictResponse(BaseModel):
@@ -66,8 +95,8 @@ class PredictResponse(BaseModel):
 
 
 # ── Feature engineering ───────────────────────────────────────────────────────
-def engineer_features(req: PredictRequest) -> pd.DataFrame:
-    mat = req.np_type.strip()
+def engineer_features(req: PredictRequest) -> tuple[pd.DataFrame, bool]:
+    mat   = req.np_type.strip()
     props = material_lookup.get(mat, global_median)
     found = mat in material_lookup
 
@@ -100,7 +129,45 @@ def engineer_features(req: PredictRequest) -> pd.DataFrame:
         "size_x_dose":        log_core_size * log_dose,
         "charge_x_dose":      zeta * log_dose,
         "enthalpy_x_dose":    f_enth * log_dose,
+        "ph":                 float(np.clip(req.ph, 4.0, 10.0)),
+        "temperature":        float(np.clip(req.temperature_c, 20.0, 42.0)),
+        "is_coated":          float(req.is_coated),
     }
+
+    # Assay one-hot
+    assay_norm = req.assay_type.strip().upper().replace("-","").replace(" ","")
+    assay_map  = {"MTT":"MTT","MTS":"MTT","WST1":"WST1","WST8":"WST1","CCK8":"CCK8","LDH":"LDH"}
+    resolved   = assay_map.get(assay_norm, "Other" if req.assay_type.lower() not in ("unknown","") else None)
+    for cat in assay_cats:
+        row[f"assay_{cat}"] = 1 if resolved == cat else 0
+
+    # Morphology one-hot
+    morph_key = req.morphology.strip().lower()
+    resolved_morph = morph_api_map.get(morph_key)
+    for col in morph_cols:
+        row[col] = 1 if col == resolved_morph else 0
+
+    # NP type class
+    np_class = req.np_type_class.strip().lower()
+    row["np_type_inorganic"] = 1.0 if np_class == "inorganic" else 0.0
+    row["np_type_organic"]   = 1.0 if np_class == "organic"   else 0.0
+    row["np_type_hybrid"]    = 1.0 if np_class == "hybrid"    else 0.0
+
+    # Therapeutic flag
+    row["is_therapeutic"] = float(req.is_therapeutic)
+
+    # Cell species and cancer type — use provided values or auto-detect from cell_line knowledge
+    cell_col_key = f"cell_{req.cell_type}"
+    if req.cell_species_human is not None:
+        row["cell_species_human"] = float(req.cell_species_human)
+    else:
+        row["cell_species_human"] = cell_line_species.get(cell_col_key, 0.5)
+    if req.cell_type_cancer is not None:
+        row["cell_type_cancer"] = float(req.cell_type_cancer)
+    else:
+        row["cell_type_cancer"] = cell_line_cancer.get(cell_col_key, 0.5)
+
+    # Cell one-hot
     for c in cell_cols:
         row[c] = 0
     col = f"cell_{req.cell_type}"
@@ -122,7 +189,7 @@ def risk_level(label, proba):
 def health():
     return {
         "status": "ok",
-        "model": "rf_v9",
+        "model": "rf_v12",
         "loaded": pipeline is not None,
         "features": len(feature_names),
         "materials_in_lookup": len(material_lookup),
@@ -133,6 +200,16 @@ def health():
 @app.get("/materials")
 def list_materials():
     return {"materials": sorted(material_lookup.keys()), "count": len(material_lookup)}
+
+
+@app.get("/morphologies")
+def list_morphologies():
+    return {"morphologies": list(morph_api_map.keys())}
+
+
+@app.get("/assays")
+def list_assays():
+    return {"assay_types": assay_cats + ["Unknown"]}
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -147,7 +224,7 @@ def predict(req: PredictRequest):
             toxicity_label=label,
             confidence=round(proba, 4),
             risk_level=risk_level(label, proba),
-            model_version="rf_v9",
+            model_version="rf_v12",
             material_found_in_lookup=found,
             threshold_used=THRESHOLD,
         )
