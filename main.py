@@ -7,7 +7,7 @@ import pickle, numpy as np, pandas as pd, os, logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="NanoToxi RF v12", version="12.0.0")
+app = FastAPI(title="NanoToxi RF v16", version="16.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,7 +17,7 @@ app.add_middleware(
 )
 
 # ── Load model ────────────────────────────────────────────────────────────────
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml_models", "RandomForest_v12.pkl")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml_models", "RandomForest_v16.pkl")
 
 pipeline     = None
 feature_names = []
@@ -189,7 +189,7 @@ def risk_level(label, proba):
 def health():
     return {
         "status": "ok",
-        "model": "rf_v12",
+        "model": "rf_v16",
         "loaded": pipeline is not None,
         "features": len(feature_names),
         "materials_in_lookup": len(material_lookup),
@@ -224,7 +224,7 @@ def predict(req: PredictRequest):
             toxicity_label=label,
             confidence=round(proba, 4),
             risk_level=risk_level(label, proba),
-            model_version="rf_v12",
+            model_version="rf_v16",
             material_found_in_lookup=found,
             threshold_used=THRESHOLD,
         )
