@@ -46,9 +46,9 @@ try:
     cell_line_species = data.get("cell_line_species", {})
     cell_line_cancer  = data.get("cell_line_cancer",  {})
     THRESHOLD         = float(data.get("best_threshold", 0.5))
-    logger.info(f"RF v12 loaded. Features={len(feature_names)}, Materials={len(material_lookup)}, Threshold={THRESHOLD}")
+    logger.info(f"RF v16 loaded. Features={len(feature_names)}, Materials={len(material_lookup)}, Threshold={THRESHOLD}")
 except Exception as e:
-    logger.error(f"Failed to load RF v12: {e}")
+    logger.error(f"Failed to load RF v16: {e}")
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
